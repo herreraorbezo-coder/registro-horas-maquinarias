@@ -68,7 +68,7 @@ st.markdown(
 st.markdown(
     """
     <div class="app-header">
-        <h2 style="margin:0; font-weight:700">🚜 Control de Horas de Maquinaria - Panel</h2>
+        <h2 style="margin:0; font-weight:700">🚜CONTROL DE HORAS MAQUINARIA - AGUAYTIA ENERGY PERÚ- Panel</h2>
         <div class="app-sub">Registro | Observaciones por audio | Historial | Reportes</div>
     </div>
     """,
