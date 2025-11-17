@@ -68,7 +68,7 @@ st.markdown(
 st.markdown(
     """
     <div class="app-header">
-        <h2 style="margin:0; font-weight:700">🚜CONTROL DE HORAS MAQUINARIA - AGUAYTIA ENERGY PERÚ- Panel</h2>
+        <h2 style="margin:0; font-weight:700">🚜CONTROL DE HORAS MAQUINARIA - AGUAYTIA ENERGY PERÚ</h2>
         <div class="app-sub">Registro | Observaciones por audio | Historial | Reportes</div>
     </div>
     """,
@@ -338,7 +338,7 @@ OPENAI_API_KEY = "tu_api_key_openai"
 CREDENCIALES_GOOGLE = '{ ... JSON completo de la cuenta de servicio ... }'
         """
     )
-    st.markdown("Si quieres, puedo añadir autenticación (login) y roles (admin / operador) en la próxima versión.")
+    st.markdown("Se podrá editar el código mediante Python, para actualizaciones.")
 
 # ---------------------------
 # Mensajes de errores de conexión (si los hay)
