@@ -224,4 +224,33 @@ def compute_kpis(df):
     try:
         agg_mq = df.groupby("Maquina")["HorasTrabajadas"].sum()
         mq_top = agg_mq.idxmax()
-        mq_top_h = float(agg_mq.max())
+        # ------------------------------
+# KPI: Máquina con más horas
+# ------------------------------
+mq_top = df.groupby("Maquinaria")["Horas"].sum().sort_values(ascending=False)
+mq_top_name = mq_top.index[0]
+mq_top_h = float(mq_top.iloc[0])
+
+st.metric("⛽ Máquina con más horas", f"{mq_top_name}", f"{mq_top_h} horas")
+
+# ------------------------------
+# KPI: Operario con más horas
+# ------------------------------
+op_top = df.groupby("Operario")["Horas"].sum().sort_values(ascending=False)
+op_top_name = op_top.index[0]
+op_top_h = float(op_top.iloc[0])
+
+st.metric("👷 Operario destacado", f"{op_top_name}", f"{op_top_h} horas")
+
+# ------------------------------
+# KPI: Días trabajados (unicos)
+# ------------------------------
+dias_trabajados = df["Fecha"].nunique()
+st.metric("📅 Días registrados", dias_trabajados)
+
+# ------------------------------
+# KPI: Total de Horas
+# ------------------------------
+total_horas = round(df["Horas"].sum(), 2)
+st.metric("⏱️ Total Horas Registradas", total_horas)
+
