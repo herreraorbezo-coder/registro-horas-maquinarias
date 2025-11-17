@@ -220,8 +220,6 @@ def compute_kpis(df):
     result["horas_mes"] = float(df[df["Fecha"] >= ult30]["HorasTrabajadas"].sum())
     result["promedio_horas"] = float(df["HorasTrabajadas"].mean() if len(df) > 0 else 0.0)
 
-    # top máquina y top operador
-    try:
       # ============================
 #   KPI – RESUMEN GENERAL
 # ============================
