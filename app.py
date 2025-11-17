@@ -1,182 +1,227 @@
+# app.py - Versión final (Google Sheets + KPIs completos + OpenAI transcripción opcional)
+# Copia y pega tal cual en tu repo. Requiere que hayas configurado:
+# 1) Streamlit Secrets: OPENAI_API_KEY (opcional) y [gcp_service_account].CREDENCIALES_GOOGLE (JSON string)
+# 2) Un Google Sheet llamado "Horas_Maquinaria" con columnas mínimas:
+#    Fecha, Operador, Maquina, HorometroInicio, HorometroFinal, HorasTrabajadas, Observaciones
+#
+# Recomendado en requirements.txt: streamlit, gspread, oauth2client, pandas, openai
+
 import streamlit as st
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import datetime
-import pandas as pd
-from openai import OpenAI
 import json
+import pandas as pd
 import io
 
+# OpenAI (opcional)
+openai_client = None
+try:
+    if "OPENAI_API_KEY" in st.secrets and st.secrets["OPENAI_API_KEY"]:
+        # Usa la librería oficial si la tienes instalada
+        try:
+            from openai import OpenAI
+            openai_client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+        except Exception:
+            openai_client = None
+except Exception:
+    openai_client = None
+
 # ---------------------------
-# Configuración de página
+# Configuración de página y estilos
 # ---------------------------
 st.set_page_config(page_title="Horas Maquinaria - Dashboard", page_icon="🚜", layout="wide")
-
-st.markdown("""
+st.markdown(
+    """
     <style>
-        .kpi-card {
-            background-color: #1f3b4d;
-            padding: 20px;
-            border-radius: 15px;
-            text-align: center;
-            color: white;
-            font-weight: bold;
-            box-shadow: 0px 4px 10px rgba(0,0,0,0.3);
-            border-left: 6px solid #4fa3d1;
-        }
-        .kpi-value {
-            font-size: 28px;
-            color: #4fa3d1;
-            font-weight: bold;
-        }
-        .kpi-label {
-            font-size: 14px;
-            color: #d9e6f2;
-        }
+    :root{
+        --primary:#0052A2;
+        --primary-soft:#D6E4F0;
+        --text:#1F2937;
+        --card-bg:#ffffff;
+        --border:#E5E7EB;
+    }
+    .app-header{
+        background: linear-gradient(90deg, rgba(0,82,162,1) 0%, rgba(0,74,145,1) 100%);
+        color: white;
+        padding: 18px;
+        border-radius: 8px;
+        margin-bottom: 18px;
+    }
+    .app-sub{
+        color: #E6EEF8;
+        margin-top: -6px;
+        font-size:13px;
+    }
+    .card {
+        background: var(--card-bg);
+        padding: 14px;
+        border-radius: 10px;
+        box-shadow: 0 4px 10px rgba(0,0,0,0.06);
+        border: 1px solid var(--border);
+    }
+    .small {
+        font-size:13px;
+        color: #6B7280;
+    }
+    .kpi {
+        font-size:22px;
+        font-weight:700;
+        color: var(--text);
+    }
+    .muted { color: #6B7280; font-size:13px; }
+    .stButton>button { background-color: var(--primary); color: white; border: none; }
+    .stDownloadButton>button { background-color: #0b69d6; color: white; border: none; }
+    .kpi-card { background-color: #ffffff; padding: 14px; border-radius: 10px; border: 1px solid #e6edf6; text-align:center; }
+    .kpi-value { font-size:20px; font-weight:700; color:#0b69d6; }
+    .kpi-label { font-size:12px; color:#6b7280; }
     </style>
-""", unsafe_allow_html=True)
+    """,
+    unsafe_allow_html=True,
+)
 
-# ---------------------------
-# Conexión con Google Sheets
-# ---------------------------
-scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-# Cargar credenciales desde Streamlit Secrets
-service_account_info = st.secrets["gcp_service_account"]
-creds = ServiceAccountCredentials.from_json_keyfile_dict(service_account_info)
-client = gspread.authorize(creds)
-
-SHEET_NAME = "RegistroHoras"
-sheet = client.open(SHEET_NAME).sheet1
-
-# ---------------------------
-# Cargar datos
-# ---------------------------
-data = sheet.get_all_records()
-
-df_all = pd.DataFrame(data)
-
-if df_all.empty:
-    st.warning("No hay datos en Google Sheets todavía.")
-    st.stop()
-
-# Convertir fechas
-df_all["Fecha"] = pd.to_datetime(df_all["Fecha"], errors='coerce').dt.date
-df_all["HorasTrabajadas"] = pd.to_numeric(df_all["HorasTrabajadas"], errors='coerce')
-
-hoy = datetime.date.today()
-ultimos_7 = hoy - datetime.timedelta(days=7)
-
-# ---------------------------
-# KPIs PROCESADOS
-# ---------------------------
-
-# KPI 1: Horas trabajadas HOY
-horas_hoy = df_all[df_all["Fecha"] == hoy]["HorasTrabajadas"].sum()
-
-# KPI 2: Horas últimos 7 días
-horas_7dias = df_all[df_all["Fecha"] >= ultimos_7]["HorasTrabajadas"].sum()
-
-# KPI 3: Promedio de horas por registro
-promedio_horas = df_all["HorasTrabajadas"].mean()
-
-# KPI 4: Máquina más utilizada (horas totales)
-maquina_top = df_all.groupby("Maquina")["HorasTrabajadas"].sum().idxmax()
-maquina_top_horas = df_all.groupby("Maquina")["HorasTrabajadas"].sum().max()
-
-# KPI 5: Operador top
-operador_top = df_all.groupby("Operador")["HorasTrabajadas"].sum().idxmax()
-operador_top_horas = df_all.groupby("Operador")["HorasTrabajadas"].sum().max()
-
-# KPI 6: Máquinas sin uso últimos 7 días
-maquinas_activas = df_all[df_all["Fecha"] >= ultimos_7]["Maquina"].unique()
-todas_maquinas = df_all["Maquina"].unique()
-maquinas_inactivas = [m for m in todas_maquinas if m not in maquinas_activas]
-
-# KPI 7: Registros con observaciones
-reg_obs = df_all[df_all["Observaciones"].astype(str).str.strip() != ""].shape[0]
-
-# KPI 8: % de registros con observaciones
-porc_obs = round((reg_obs / len(df_all)) * 100, 1)
-
-# KPI 9: Días sin actividad por máquina
-dias_inactivos = {}
-for m in todas_maquinas:
-    ult_fecha = df_all[df_all["Maquina"] == m]["Fecha"].max()
-    dias_inactivos[m] = (hoy - ult_fecha).days
-
-# ---------------------------
-# MOSTRAR KPIs EN TARJETAS
-# ---------------------------
-st.title("🚜 Dashboard de Control de Horas - Maquinarias")
-
-col1, col2, col3, col4 = st.columns(4)
-col5, col6, col7, col8 = st.columns(4)
-
-col1.markdown(f"""
-    <div class="kpi-card">
-        <div class="kpi-value">{horas_hoy:.1f}</div>
-        <div class="kpi-label">Horas trabajadas hoy</div>
+st.markdown(
+    """
+    <div class="app-header">
+        <h2 style="margin:0; font-weight:700">🚜 CONTROL DE HORAS MAQUINARIA - AGUAYTIA ENERGY PERÚ</h2>
+        <div class="app-sub">Registro | Observaciones por audio | Historial | Reportes | KPIs mantenimiento</div>
     </div>
-""", unsafe_allow_html=True)
-
-col2.markdown(f"""
-    <div class="kpi-card">
-        <div class="kpi-value">{horas_7dias:.1f}</div>
-        <div class="kpi-label">Horas últimos 7 días</div>
-    </div>
-""", unsafe_allow_html=True)
-
-col3.markdown(f"""
-    <div class="kpi-card">
-        <div class="kpi-value">{promedio_horas:.2f}</div>
-        <div class="kpi-label">Promedio horas por registro</div>
-    </div>
-""", unsafe_allow_html=True)
-
-col4.markdown(f"""
-    <div class="kpi-card">
-        <div class="kpi-value">{maquina_top}</div>
-        <div class="kpi-label">Máquina más utilizada ({maquina_top_horas:.1f} h)</div>
-    </div>
-""", unsafe_allow_html=True)
-
-col5.markdown(f"""
-    <div class="kpi-card">
-        <div class="kpi-value">{operador_top}</div>
-        <div class="kpi-label">Operador con más horas ({operador_top_horas:.1f} h)</div>
-    </div>
-""", unsafe_allow_html=True)
-
-col6.markdown(f"""
-    <div class="kpi-card">
-        <div class="kpi-value">{len(maquinas_inactivas)}</div>
-        <div class="kpi-label">Máquinas sin uso últimos 7 días</div>
-    </div>
-""", unsafe_allow_html=True)
-
-col7.markdown(f"""
-    <div class="kpi-card">
-        <div class="kpi-value">{reg_obs}</div>
-        <div class="kpi-label">Registros con observaciones</div>
-    </div>
-""", unsafe_allow_html=True)
-
-col8.markdown(f"""
-    <div class="kpi-card">
-        <div class="kpi-value">{porc_obs}%</div>
-        <div class="kpi-label">Porcentaje con observaciones</div>
-    </div>
-""", unsafe_allow_html=True)
+    """,
+    unsafe_allow_html=True,
+)
 
 # ---------------------------
-# TABLAS DE APOYO
+# Conexión segura a Google Sheets usando Streamlit Secrets
 # ---------------------------
-st.subheader("📌 Máquinas con días sin actividad")
-df_dias_inactivos = pd.DataFrame({
-    "Máquina": dias_inactivos.keys(),
-    "Días sin uso": dias_inactivos.values()
-})
-st.dataframe(df_dias_inactivos)
+sheet = None
+gspread_error = None
 
-st.subheader("📌 Datos completos")
-st.dataframe(df_all)
+try:
+    if "gcp_service_account" not in st.secrets:
+        raise KeyError("No se encontró el bloque [gcp_service_account] en Streamlit Secrets.")
+
+    # En tus Secrets tienes CREDENCIALES_GOOGLE como JSON string (tal como lo armamos antes)
+    creds_json_str = st.secrets["gcp_service_account"].get("CREDENCIALES_GOOGLE") \
+                     if isinstance(st.secrets["gcp_service_account"], dict) else None
+
+    if not creds_json_str:
+        # También soportamos el caso donde el usuario pegó directamente claves TOML (type, private_key, ...)
+        # Entonces pasamos todo el dict tal cual
+        # Si st.secrets["gcp_service_account"] ya es un dict con keys type, project_id, etc. usamos eso.
+        if isinstance(st.secrets["gcp_service_account"], dict) and "type" in st.secrets["gcp_service_account"]:
+            service_account_info = st.secrets["gcp_service_account"]
+        else:
+            raise KeyError("La clave CREDENCIALES_GOOGLE no está en el formato esperado dentro de [gcp_service_account].")
+    else:
+        # parseamos la string JSON dentro del campo CREDENCIALES_GOOGLE
+        service_account_info = json.loads(creds_json_str)
+
+    scope = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive"
+    ]
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(service_account_info, scope)
+    gc = gspread.authorize(creds)
+
+    # Nombre del Google Sheet (según nos dijiste)
+    SHEET_NAME = "Horas_Maquinaria"
+    sh = gc.open(SHEET_NAME)
+    sheet = sh.sheet1  # usa la primera hoja por defecto; cambiar si necesitas otra
+except Exception as e:
+    gspread_error = str(e)
+    sheet = None
+
+# ---------------------------
+# Utilidades para manejar la data
+# ---------------------------
+def fetch_all_records(sheet_obj):
+    """Devuelve dataframe con columnas esperadas, aunque la hoja esté vacía o con cabeceras diferentes."""
+    try:
+        rows = sheet_obj.get_all_records()
+        df = pd.DataFrame(rows)
+        # Normalizar columnas mínimas
+        expected_cols = ["Fecha", "Operador", "Maquina", "HorometroInicio", "HorometroFinal", "HorasTrabajadas", "Observaciones"]
+        for c in expected_cols:
+            if c not in df.columns:
+                df[c] = ""
+        # Conversión tipo
+        try:
+            df["Fecha"] = pd.to_datetime(df["Fecha"], errors="coerce").dt.date
+        except Exception:
+            pass
+        df["HorasTrabajadas"] = pd.to_numeric(df.get("HorasTrabajadas", 0), errors="coerce").fillna(0)
+        return df[expected_cols]
+    except Exception:
+        # fallback: dataframe vacío con columnas
+        return pd.DataFrame(columns=["Fecha","Operador","Maquina","HorometroInicio","HorometroFinal","HorasTrabajadas","Observaciones"])
+
+def append_record(sheet_obj, record_list):
+    """Agrega fila al Sheet (lista ordenada a las columnas existentes)."""
+    sheet_obj.append_row(record_list)
+
+# ---------------------------
+# Sidebar: menú
+# ---------------------------
+st.sidebar.header("📁 Menú")
+menu = st.sidebar.radio("", ["Registro de horas", "Observaciones por audio", "Historial", "Reportes", "Configuración"])
+
+st.sidebar.markdown("---")
+st.sidebar.header("🔒 Usuario")
+usuario = st.sidebar.text_input("Usuario (opcional)")
+st.sidebar.caption("La autenticación puede agregarse en Configuración.")
+
+# mostrar errores de conexión en sidebar
+if gspread_error:
+    st.sidebar.error("Error Google Sheets: " + gspread_error)
+    st.error("Error al conectar con Google Sheets. Revisa tus Secrets y la hoja llamada 'Horas_Maquinaria'.")
+    # No hacemos st.stop() para permitir usar funciones locales, pero mayoría de features estarán deshabilitadas.
+
+# ---------------------------
+# Cargar dataframe (si exist)
+# ---------------------------
+df_all = fetch_all_records(sheet) if sheet is not None else pd.DataFrame(columns=["Fecha","Operador","Maquina","HorometroInicio","HorometroFinal","HorasTrabajadas","Observaciones"])
+
+# ---------------------------
+# Funciones KPI / mantenimiento (derivado de datos disponibles)
+# ---------------------------
+def compute_kpis(df):
+    """Calcula todos los KPIs solicitados usando la info disponible en el sheet."""
+    hoy = datetime.date.today()
+    ult7 = hoy - datetime.timedelta(days=7)
+    ult30 = hoy - datetime.timedelta(days=30)
+    result = {}
+
+    if df.empty:
+        # todos 0 / vacíos
+        result.update({
+            "horas_hoy": 0.0,
+            "horas_7dias": 0.0,
+            "horas_mes": 0.0,
+            "promedio_horas": 0.0,
+            "maquina_top": ("-", 0.0),
+            "operador_top": ("-", 0.0),
+            "maquinas_inactivas_7d": [],
+            "registros_con_observaciones": 0,
+            "porc_registros_con_observaciones": 0.0,
+            "dias_inactivos_por_maquina": {},
+            # mantenimiento estimado
+            "availability_30d": {},
+            "mtbf_by_machine": {},
+            "mttr_by_machine": {},
+        })
+        return result
+
+    # asegurar tipos
+    df["Fecha"] = pd.to_datetime(df["Fecha"], errors="coerce").dt.date
+    df["HorasTrabajadas"] = pd.to_numeric(df.get("HorasTrabajadas", 0), errors="coerce").fillna(0)
+
+    result["horas_hoy"] = float(df[df["Fecha"] == hoy]["HorasTrabajadas"].sum())
+    result["horas_7dias"] = float(df[df["Fecha"] >= ult7]["HorasTrabajadas"].sum())
+    result["horas_mes"] = float(df[df["Fecha"] >= ult30]["HorasTrabajadas"].sum())
+    result["promedio_horas"] = float(df["HorasTrabajadas"].mean() if len(df) > 0 else 0.0)
+
+    # top máquina y top operador
+    try:
+        agg_mq = df.groupby("Maquina")["HorasTrabajadas"].sum()
+        mq_top = agg_mq.idxmax()
+        mq_top_h = float(agg_mq.max())
