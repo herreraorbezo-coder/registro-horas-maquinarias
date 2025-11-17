@@ -40,7 +40,9 @@ st.markdown("""
 # Conexión con Google Sheets
 # ---------------------------
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-creds = ServiceAccountCredentials.from_json_keyfile_name("service_account.json", scope)
+# Cargar credenciales desde Streamlit Secrets
+service_account_info = st.secrets["gcp_service_account"]
+creds = ServiceAccountCredentials.from_json_keyfile_dict(service_account_info)
 client = gspread.authorize(creds)
 
 SHEET_NAME = "RegistroHoras"
