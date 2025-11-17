@@ -1,4 +1,4 @@
-# app.py - Versión profesional (Estilo A: Corporativo Azul/Gris)
+# app.py - Versión profesional (Estilo A: Corporativo Azul/Gris + Logo)
 import streamlit as st
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
@@ -32,6 +32,8 @@ st.markdown(
         padding: 18px;
         border-radius: 8px;
         margin-bottom: 18px;
+        display: flex;
+        align-items: center;
     }
     .app-sub{
         color: #E6EEF8;
@@ -63,13 +65,16 @@ st.markdown(
 )
 
 # ---------------------------
-# Título y encabezado
+# Título y encabezado con logo
 # ---------------------------
 st.markdown(
-    """
+    f"""
     <div class="app-header">
-        <h2 style="margin:0; font-weight:700">🚜CONTROL DE HORAS DE MAQUINARIA - AGUAYTIA ENERGY PERÚ</h2>
-        <div class="app-sub">Registro | Observaciones por audio | Historial | Reportes</div>
+        <img src="assets/aguaytia_logo.png" width="80" style="margin-right:15px">
+        <div>
+            <h2 style="margin:0; font-weight:700">🚜 CONTROL DE HORAS DE MAQUINARIA - AGUAYTIA ENERGY PERÚ</h2>
+            <div class="app-sub">Registro | Observaciones por audio | Historial | Reportes</div>
+        </div>
     </div>
     """,
     unsafe_allow_html=True,
@@ -103,7 +108,7 @@ def init_openai():
     client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
     return client
 
-# inicializar (si secrets no están configuradas, manejaremos el error más abajo)
+# inicializar
 gspread_error = None
 openai_error = None
 sheet = None
@@ -126,7 +131,6 @@ def fetch_all_records(sheet_obj):
         rows = sheet_obj.get_all_records()
         df = pd.DataFrame(rows)
         if df.empty:
-            # asegurar columnas consistentes
             df = pd.DataFrame(columns=["Fecha","Operador","Maquina","HorometroInicio","HorometroFinal","HorasTrabajadas","Observaciones"])
         return df
     except Exception:
@@ -143,8 +147,6 @@ if menu == "Registro de horas":
 
     with col1:
         st.markdown("### 📋 Datos del registro", unsafe_allow_html=True)
-        with st.container():
-            st.write("")
         with st.form("registro_form", clear_on_submit=False):
             operador = st.text_input("👷 Nombre del operador", max_chars=80)
             maquina = st.selectbox("🚜 Seleccionar máquina", [
@@ -161,14 +163,12 @@ if menu == "Registro de horas":
 
             submitted = st.form_submit_button("Enviar registro")
             if submitted:
-                # validaciones
                 if horometro_final < horometro_inicial:
                     st.error("⚠️ El horómetro final no puede ser menor que el inicial.")
                 elif not operador:
                     st.error("⚠️ Ingresa el nombre del operador.")
                 else:
                     horas_trabajadas = round(horometro_final - horometro_inicial, 2)
-                    # guardar en Google Sheets si está configurado
                     if sheet is None:
                         st.error("❌ Error: No se puede conectar a Google Sheets. Revisa tus secrets.")
                     else:
@@ -185,7 +185,6 @@ if menu == "Registro de horas":
         total_hours = 0.0
         registros = 0
         if not df_all.empty:
-            # asegurar tipos
             df_all["HorasTrabajadas"] = pd.to_numeric(df_all.get("HorasTrabajadas", 0), errors="coerce").fillna(0)
             total_hours = df_all["HorasTrabajadas"].sum()
             registros = len(df_all)
@@ -201,18 +200,16 @@ if menu == "Registro de horas":
 elif menu == "Observaciones por audio":
     st.markdown("### 🎤 Observaciones por audio → Texto", unsafe_allow_html=True)
     st.info("Sube un archivo de audio (mp3, wav, m4a). La transcripción se agregará al campo de observaciones al enviar el registro (o puedes copiarla manualmente).")
-
     audio_file = st.file_uploader("Sube tu audio (mp3, wav, m4a)", type=["mp3","wav","m4a"])
     transcribed_text = ""
     if audio_file:
         st.audio(audio_file)
         if client is None:
-            st.warning("No está configurada la API de OpenAI: activa OPENAI_API_KEY en Secrets para transcribir automáticamente.")
+            st.warning("No está configurada la API de OpenAI.")
         else:
             if st.button("Transcribir audio"):
                 with st.spinner("Transcribiendo..."):
                     try:
-                        # usar la API (Whisper) para transcribir
                         res = client.audio.transcriptions.create(
                             model="gpt-4o-transcribe",
                             file=audio_file
@@ -268,9 +265,7 @@ elif menu == "Historial":
         if df.empty:
             st.info("No hay registros aún.")
         else:
-            # Asegurar nombres de columnas (si la hoja tiene otras cabeceras)
             cols = df.columns.tolist()
-            # filtros
             c1, c2, c3 = st.columns([2,2,2])
             with c1:
                 filtro_op = st.selectbox("Filtrar por operador", options=["Todos"] + sorted(df["Operador"].dropna().unique().tolist()))
@@ -280,7 +275,6 @@ elif menu == "Historial":
                 fecha_range = st.date_input("Rango de fecha (desde - hasta)", [df["Fecha"].min(), df["Fecha"].max()]) if "Fecha" in df.columns else None
 
             df_display = df.copy()
-            # convertir Fecha a datetime si es string
             try:
                 df_display["Fecha"] = pd.to_datetime(df_display["Fecha"]).dt.date
             except Exception:
@@ -297,7 +291,6 @@ elif menu == "Historial":
             st.markdown(f"**Registros mostrados:** {len(df_display)}")
             st.dataframe(df_display.reset_index(drop=True), use_container_width=True)
 
-            # Descargar CSV
             csv = df_display.to_csv(index=False).encode('utf-8')
             st.download_button("📥 Descargar CSV", data=csv, file_name="historial_horas.csv", mime="text/csv")
 
@@ -313,9 +306,7 @@ elif menu == "Reportes":
         if df.empty:
             st.info("Aún no hay datos para graficar.")
         else:
-            # limpieza y conversión
             df["HorasTrabajadas"] = pd.to_numeric(df.get("HorasTrabajadas", 0), errors="coerce").fillna(0)
-            # Horas por máquina (últimos 30 días)
             st.markdown("**Horas por máquina (total)**")
             hours_by_machine = df.groupby("Maquina")["HorasTrabajadas"].sum().reset_index().sort_values("HorasTrabajadas", ascending=False)
             st.bar_chart(hours_by_machine.set_index("Maquina"))
@@ -341,7 +332,7 @@ CREDENCIALES_GOOGLE = '{ ... JSON completo de la cuenta de servicio ... }'
     st.markdown("En crecimiento.")
 
 # ---------------------------
-# Mensajes de errores de conexión (si los hay)
+# Mensajes de errores
 # ---------------------------
 if gspread_error:
     st.sidebar.error("Error Google Sheets: revisa CREDENCIALES_GOOGLE en Secrets.")
@@ -353,3 +344,4 @@ if openai_error:
 # ---------------------------
 st.markdown("---")
 st.markdown('<div style="font-size:12px; color:#6B7280">Desarrollado para uso interno • Jhan C. Herrera Orbezo</div>', unsafe_allow_html=True)
+
