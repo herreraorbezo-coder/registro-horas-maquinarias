@@ -1,5 +1,0 @@
-streamlit
-gspread
-oauth2client
-openai>=1.0
-pandas
