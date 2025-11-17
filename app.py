@@ -222,8 +222,6 @@ def compute_kpis(df):
 
     # top máquina y top operador
     try:
-        agg_mq = df.groupby("Maquina")["HorasTrabajadas"].sum()
-        mq_top = agg_mq.idxmax()
       # ============================
 #   KPI – RESUMEN GENERAL
 # ============================
