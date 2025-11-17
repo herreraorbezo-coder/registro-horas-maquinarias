@@ -219,6 +219,24 @@ def compute_kpis(df):
     result["horas_7dias"] = float(df[df["Fecha"] >= ult7]["HorasTrabajadas"].sum())
     result["horas_mes"] = float(df[df["Fecha"] >= ult30]["HorasTrabajadas"].sum())
     result["promedio_horas"] = float(df["HorasTrabajadas"].mean() if len(df) > 0 else 0.0)
+# ==============================
+# 🔄 CARGA DE DATOS DESDE GOOGLE SHEETS
+# ==============================
+
+sheet = client.open("Horas_Maquinaria").sheet1
+
+data = sheet.get_all_records()
+df = pd.DataFrame(data)
+
+# Normalizar nombres de columnas
+df.columns = df.columns.str.strip().str.replace(" ", "")
+
+# Asegurar columnas estándar
+if "Horas" not in df.columns and "HorasTrabajadas" in df.columns:
+    df["Horas"] = df["HorasTrabajadas"]
+
+if "Maquinaria" not in df.columns and "Maquina" in df.columns:
+    df["Maquinaria"] = df["Maquina"]
 
       # ============================
 #   KPI – RESUMEN GENERAL
