@@ -1,4 +1,4 @@
-# app.py - Final (Google Sheets + KPIs + OpenAI opcional)
+# app.py (PARTE A) - Inicio, imports, estilo (Oscuro negro/amarillo), conexión segura a Google Sheets
 # Requisitos (requirements.txt): streamlit, gspread, oauth2client, pandas, openai (opcional)
 
 import streamlit as st
@@ -8,6 +8,7 @@ import datetime
 import io
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
+import re
 
 # ---------------------------
 # Opcional: cliente OpenAI (si OPENAI_API_KEY en secrets)
@@ -24,21 +25,32 @@ except Exception:
     openai_client = None
 
 # ---------------------------
-# Page config & styles
+# Page config & dark style (Estilo B: Negro/Amarillo)
 # ---------------------------
 st.set_page_config(page_title="Horas Maquinaria - Dashboard", page_icon="🚜", layout="wide")
 st.markdown(
     """
     <style>
-    :root{--primary:#0052A2;--text:#1F2937;--card-bg:#ffffff;--border:#E5E7EB;}
-    .app-header{background: linear-gradient(90deg,#0052A2 0%,#004A91 100%); color:#fff; padding:18px; border-radius:8px; margin-bottom:16px;}
-    .app-sub{color:#E6EEF8; margin-top:-6px; font-size:13px;}
-    .card{background:var(--card-bg); padding:14px; border-radius:10px; box-shadow:0 4px 10px rgba(0,0,0,0.06); border:1px solid var(--border);}
-    .kpi-card{background:#fff;padding:12px;border-radius:10px;border:1px solid #e6edf6;text-align:center;}
-    .kpi-value{font-size:20px;font-weight:700;color:#0b69d6;}
-    .kpi-label{font-size:12px;color:#6b7280;}
-    .muted{color:#6b7280;font-size:13px;}
-    .stButton>button{background-color:var(--primary); color:white; border: none;}
+    :root{
+      --bg:#0b0b0d;
+      --card:#0f1720;
+      --accent:#f6c94a;
+      --muted:#9aa0a6;
+      --border:#1f2933;
+      --text:#e6e6e6;
+    }
+    html, body, .stApp { background: var(--bg); color: var(--text); }
+    .app-header{ background: linear-gradient(90deg, #070708 0%, #101214 100%); color: var(--text); padding: 18px; border-radius: 8px; margin-bottom: 14px; border: 1px solid var(--border); }
+    .app-sub{ color: var(--muted); margin-top: -6px; font-size:13px; }
+    .card{ background: var(--card); padding: 12px; border-radius: 10px; border: 1px solid var(--border); }
+    .kpi-dark{ background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01)); padding:12px; border-radius:10px; border-left:6px solid var(--accent); }
+    .kpi-value { font-size:20px; font-weight:800; color: var(--accent); }
+    .kpi-label { font-size:12px; color: var(--muted); }
+    .muted{ color: var(--muted); font-size:13px; }
+    .stButton>button{ background-color: var(--accent); color: #000; border: none; font-weight:700; }
+    .stDownloadButton>button{ background-color: #ffd966; color: #000; border: none; }
+    table.dataframe { color: var(--text) !important; }
+    .streamlit-expanderHeader { color: var(--text) !important; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -48,14 +60,14 @@ st.markdown(
     """
     <div class="app-header">
         <h2 style="margin:0; font-weight:700">🚜 CONTROL DE HORAS MAQUINARIA - AGUAYTIA ENERGY PERÚ</h2>
-        <div class="app-sub">Registro | Observaciones por audio | Historial | Reportes | KPIs mantenimiento</div>
+        <div class="app-sub">Registro · Observaciones por audio · Historial · Reportes · KPIs mantenimiento</div>
     </div>
     """,
     unsafe_allow_html=True,
 )
 
 # ---------------------------
-# Google Sheets connection via Streamlit Secrets
+# Conexión segura a Google Sheets (manejo robusto de formatos de secrets)
 # ---------------------------
 gspread_error = None
 sheet = None
@@ -65,24 +77,49 @@ try:
     if "gcp_service_account" not in st.secrets:
         raise KeyError("No se encontró el bloque [gcp_service_account] en Streamlit Secrets.")
 
-    # Dos formatos posibles en secrets:
-    # 1) st.secrets["gcp_service_account"]["CREDENCIALES_GOOGLE"] -> JSON string
-    # 2) st.secrets["gcp_service_account"] -> dict con keys directas (type, project_id, private_key, ...)
     gcp_secret = st.secrets["gcp_service_account"]
 
-    # Detectar y parsear JSON string si existe
-    if isinstance(gcp_secret, dict) and "CREDENCIALES_GOOGLE" in gcp_secret and gcp_secret["CREDENCIALES_GOOGLE"]:
+    # Caso A: secrets tiene CREDENCIALES_GOOGLE como JSON string
+    service_account_info = None
+    if isinstance(gcp_secret, dict) and "CREDENCIALES_GOOGLE" in gcp_secret and isinstance(gcp_secret["CREDENCIALES_GOOGLE"], str) and gcp_secret["CREDENCIALES_GOOGLE"].strip() != "":
+        # intenta parsear JSON
         try:
             service_account_info = json.loads(gcp_secret["CREDENCIALES_GOOGLE"])
-        except Exception as e:
-            raise ValueError("El campo CREDENCIALES_GOOGLE no contiene JSON válido: " + str(e))
-    elif isinstance(gcp_secret, dict) and "type" in gcp_secret:
-        # El usuario pegó las claves directamente como TOML -> ya es dict válido
-        service_account_info = gcp_secret
+        except Exception as e_json:
+            # si falla, intentamos limpiar comillas y nuevos saltos
+            s = gcp_secret["CREDENCIALES_GOOGLE"]
+            s = s.strip().strip("'").strip('"')
+            try:
+                service_account_info = json.loads(s)
+            except Exception:
+                raise ValueError("CREDENCIALES_GOOGLE existe pero no es JSON válido: " + str(e_json))
+    elif isinstance(gcp_secret, dict) and "type" in gcp_secret and gcp_secret.get("type") == "service_account":
+        # Caso B: secrets contiene directamente las claves TOML (type, project_id, private_key, ...)
+        service_account_info = dict(gcp_secret)
+        # Si private_key contiene '\n' como literales sin escapes, ya está bien.
+        # Si el private_key fue pegado multilínea, Streamlit lo puede almacenar reemplazando saltos; ambos casos manejables.
     else:
-        raise ValueError("El bloque [gcp_service_account] no está en formato esperado.")
+        # Soporte adicional: si gcp_secret es string con JSON
+        if isinstance(gcp_secret, str):
+            try:
+                service_account_info = json.loads(gcp_secret)
+            except Exception:
+                raise ValueError("El bloque [gcp_service_account] no está en formato esperado (string no JSON).")
+        else:
+            raise ValueError("El bloque [gcp_service_account] no está en formato esperado.")
 
-    # Scopes para Sheets & Drive
+    # Asegurar presence de campo 'private_key' con saltos \n en forma de escape
+    if "private_key" in service_account_info and isinstance(service_account_info["private_key"], str):
+        pk = service_account_info["private_key"]
+        # Si la key contiene caracteres reales de nueva línea, reemplazamos por \n escapes para compatibilidad
+        if "\n" in pk and "\\n" not in pk:
+            # Convertir a escaped newline string (gspread/oauth2client acepta con \n o con newlines; keep as-is)
+            # Algunos entornos requieren literal \n inside string; oauth2client handles actual newlines fine.
+            service_account_info["private_key"] = pk
+    else:
+        raise ValueError("La credencial no contiene private_key válido.")
+
+    # Scope para Sheets y Drive
     scope = [
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive"
@@ -91,14 +128,15 @@ try:
     creds = ServiceAccountCredentials.from_json_keyfile_dict(service_account_info, scope)
     gc = gspread.authorize(creds)
 
-    # Abrir el Google Sheet (nombre que diste)
     SHEET_NAME = "Horas_Maquinaria"
     sh = gc.open(SHEET_NAME)
-    sheet = sh.sheet1  # primera hoja; cambiar si necesitas otra
+    sheet = sh.sheet1
+
 except Exception as e:
     gspread_error = str(e)
     sheet = None
     gc = None
+# app.py (PARTE B) - utilidades, fetch/append, KPIs, Registro de horas UI
 
 # ---------------------------
 # Utilidades: leer y escribir
@@ -234,7 +272,6 @@ def compute_kpis(df):
         mtbf[m] = round(total_hours / failures, 2) if failures > 0 and total_hours > 0 else None
 
         # try to parse durations in observations e.g. "2h", "3 horas"
-        import re
         durations = []
         for obs in failures_df[failures_df["Maquina"] == m]["Observaciones"].astype(str).tolist():
             matches = re.findall(r"(\d+(\.\d+)?)\s*(h|hr|hrs|hora|horas)", obs.lower())
@@ -297,48 +334,142 @@ if menu == "Registro de horas":
         kpis = compute_kpis(df_all)
         c1, c2 = st.columns(2)
         with c1:
-            st.markdown(f'<div class="kpi-card"><div class="kpi-value">{kpis["horas_hoy"]:.2f} hrs</div><div class="kpi-label">Horas hoy</div></div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="kpi-dark"><div class="kpi-value">{kpis["horas_hoy"]:.2f} hrs</div><div class="kpi-label">Horas hoy</div></div>', unsafe_allow_html=True)
             st.markdown(f'<div style="height:8px"></div>', unsafe_allow_html=True)
-            st.markdown(f'<div class="kpi-card"><div class="kpi-value">{kpis["horas_7dias"]:.2f} hrs</div><div class="kpi-label">Horas últimos 7 días</div></div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="kpi-dark"><div class="kpi-value">{kpis["horas_7dias"]:.2f} hrs</div><div class="kpi-label">Horas últimos 7 días</div></div>', unsafe_allow_html=True)
         with c2:
-            st.markdown(f'<div class="kpi-card"><div class="kpi-value">{kpis["promedio_horas"]:.2f} hrs</div><div class="kpi-label">Promedio por registro</div></div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="kpi-dark"><div class="kpi-value">{kpis["promedio_horas"]:.2f} hrs</div><div class="kpi-label">Promedio por registro</div></div>', unsafe_allow_html=True)
             st.markdown(f'<div style="height:8px"></div>', unsafe_allow_html=True)
-            st.markdown(f'<div class="kpi-card"><div class="kpi-value">{kpis["maquina_top"][0]}</div><div class="kpi-label">Máquina top ({kpis["maquina_top"][1]:.1f} h)</div></div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="kpi-dark"><div class="kpi-value">{kpis["maquina_top"][0]}</div><div class="kpi-label">Máquina top ({kpis["maquina_top"][1]:.1f} h)</div></div>', unsafe_allow_html=True)
+# app.py (PARTE C) - Historial, Reportes, Configuración, Footer
 
 # ---------------------------
 # Página: Observaciones por audio
+# (ya incluida arriba; continuar con Historial)
 # ---------------------------
-elif menu == "Observaciones por audio":
-    st.markdown("### 🎤 Observaciones por audio → Texto")
-    st.info("Sube un archivo de audio (mp3, wav, m4a). La transcripción se agregará al campo de observaciones al enviar el registro.")
-    audio_file = st.file_uploader("Sube tu audio (mp3, wav, m4a)", type=["mp3","wav","m4a"])
-    transcribed_text = ""
-    if audio_file:
-        st.audio(audio_file)
-        if openai_client is None:
-            st.warning("OpenAI no configurado o cliente no disponible: activa OPENAI_API_KEY en Secrets para transcribir automáticamente.")
-        else:
-            if st.button("Transcribir audio"):
-                with st.spinner("Transcribiendo..."):
-                    try:
-                        res = openai_client.audio.transcriptions.create(model="gpt-4o-transcribe", file=audio_file)
-                        transcribed_text = getattr(res, "text", None) or res.get("text", "") or str(res)
-                        st.success("✅ Transcripción completada.")
-                        st.write(transcribed_text)
-                    except Exception as e:
-                        st.error(f"Error en la transcripción: {e}")
+
+# ---------------------------
+# Página: Historial
+# ---------------------------
+elif menu == "Historial":
+    st.markdown("### 📚 Historial de registros")
+    if df_all.empty:
+        st.info("No hay registros aún.")
+    else:
+        # convertir Fecha a datetime.date si no lo es
+        try:
+            df_all["Fecha"] = pd.to_datetime(df_all["Fecha"]).dt.date
+        except Exception:
+            pass
+
+        # filtros
+        c1, c2, c3 = st.columns([2,2,2])
+        with c1:
+            filtro_op = st.selectbox("Filtrar por operador", options=["Todos"] + sorted(df_all["Operador"].dropna().unique().tolist()))
+        with c2:
+            filtro_maq = st.selectbox("Filtrar por máquina", options=["Todos"] + sorted(df_all["Maquina"].dropna().unique().tolist()))
+        with c3:
+            fecha_min = df_all["Fecha"].min() if not df_all.empty else datetime.date.today()
+            fecha_max = df_all["Fecha"].max() if not df_all.empty else datetime.date.today()
+            fecha_range = st.date_input("Rango de fecha (desde - hasta)", [fecha_min, fecha_max])
+
+        df_display = df_all.copy()
+        if filtro_op != "Todos":
+            df_display = df_display[df_display["Operador"] == filtro_op]
+        if filtro_maq != "Todos":
+            df_display = df_display[df_display["Maquina"] == filtro_maq]
+        if fecha_range and isinstance(fecha_range, list) and len(fecha_range) == 2:
+            desde, hasta = fecha_range
+            df_display = df_display[(df_display["Fecha"] >= desde) & (df_display["Fecha"] <= hasta)]
+
+        st.markdown(f"**Registros mostrados:** {len(df_display)}")
+        st.dataframe(df_display.reset_index(drop=True), use_container_width=True)
+
+        # Descargar CSV
+        csv = df_display.to_csv(index=False).encode('utf-8')
+        st.download_button("📥 Descargar CSV", data=csv, file_name="historial_horas.csv", mime="text/csv")
+
+# ---------------------------
+# Página: Reportes y KPIs avanzados
+# ---------------------------
+elif menu == "Reportes":
+    st.markdown("### 📊 Reportes y KPIs")
+    kpis = compute_kpis(df_all)
+
+    # KPIs generales
+    cols = st.columns(4)
+    cols[0].markdown(f'<div class="kpi-dark"><div class="kpi-value">{kpis["horas_hoy"]:.1f} hrs</div><div class="kpi-label">Horas hoy</div></div>', unsafe_allow_html=True)
+    cols[1].markdown(f'<div class="kpi-dark"><div class="kpi-value">{kpis["horas_7dias"]:.1f} hrs</div><div class="kpi-label">Horas últimos 7 días</div></div>', unsafe_allow_html=True)
+    cols[2].markdown(f'<div class="kpi-dark"><div class="kpi-value">{kpis["horas_mes"]:.1f} hrs</div><div class="kpi-label">Horas últimos 30 días</div></div>', unsafe_allow_html=True)
+    cols[3].markdown(f'<div class="kpi-dark"><div class="kpi-value">{kpis["promedio_horas"]:.2f} hrs</div><div class="kpi-label">Promedio por registro</div></div>', unsafe_allow_html=True)
 
     st.markdown("---")
-    st.markdown("### 📝 Insertar transcripción en un nuevo registro")
-    with st.form("audio_to_record"):
-        operador_a = st.text_input("👷 Nombre del operador (para este registro)", max_chars=80)
-        maquinas_list = sorted(df_all["Maquina"].dropna().unique().tolist()) if not df_all.empty else ["Telehandler JCB","UPTIMOS D600","Retroexcavadora LIU GONG","CAMION volkswagen 31-320","EXCAVADORA HYUNDAI"]
-        maquina_a = st.selectbox("🚜 Máquina", maquinas_list, key="maquina_a")
-        fecha_a = st.date_input("📅 Fecha", datetime.date.today(), key="fecha_a")
-        hor_in = st.number_input("Horómetro inicial (hrs)", min_value=0.0, format="%.2f", key="hor_in")
-        hor_fin = st.number_input("Horómetro final (hrs)", min_value=0.0, format="%.2f", key="hor_fin")
-        obs_manual = st.text_area("Observaciones (puedes editar la transcripción)", value=transcribed_text, height=120)
-        enviar_audio_reg = st.form_submit_button("Enviar registro con observaciones")
-        if enviar_audio_reg:
-            if hor_fin < hor_in:
-                st.error
+    # Horas por máquina (total)
+    st.markdown("**Horas por máquina (total)**")
+    hours_by_machine = pd.DataFrame(list(kpis["hours_by_machine"].items()), columns=["Maquina","Horas"]).sort_values("Horas", ascending=False)
+    if not hours_by_machine.empty:
+        st.bar_chart(hours_by_machine.set_index("Maquina"))
+    else:
+        st.info("No hay datos por máquina para graficar.")
+
+    st.markdown("---")
+    # Top operadores
+    st.markdown("**Top operadores por horas**")
+    top_ops = df_all.groupby("Operador")["HorasTrabajadas"].sum().reset_index().sort_values("HorasTrabajadas", ascending=False).head(10)
+    st.table(top_ops)
+
+    st.markdown("---")
+    # KPIs de mantenimiento (estimados)
+    st.markdown("### 🛠️ KPIs de mantenimiento (estimaciones a partir de Observaciones)")
+    col_a, col_b = st.columns([2,3])
+    with col_a:
+        st.markdown("**Disponibilidad (últimos 30 días)**")
+        av_df = pd.DataFrame(list(kpis["availability_30d"].items()), columns=["Maquina","Disponibilidad_30d_%"]).sort_values("Disponibilidad_30d_%", ascending=False)
+        st.dataframe(av_df)
+    with col_b:
+        st.markdown("**MTBF / MTTR (estimados)**")
+        mtbf_df = pd.DataFrame(list(kpis["mtbf_by_machine"].items()), columns=["Maquina","MTBF_h"])
+        mttr_df = pd.DataFrame(list(kpis["mttr_by_machine"].items()), columns=["Maquina","MTTR_h_est"])
+        mt_df = mtbf_df.merge(mttr_df, on="Maquina", how="outer")
+        st.dataframe(mt_df.fillna("N/A"))
+
+    st.markdown("---")
+    st.markdown("**Máquinas sin uso en últimos 7 días**")
+    st.write(kpis["maquinas_inactivas_7d"] or "Ninguna")
+
+    st.markdown("---")
+    st.markdown("**Días sin uso por máquina (desde última fecha registrada)**")
+    st.dataframe(pd.DataFrame(list(kpis["dias_inactivos_por_maquina"].items()), columns=["Maquina","Dias_sin_uso"]).sort_values("Dias_sin_uso", ascending=False))
+
+    st.markdown("---")
+    st.markdown("**Registros con observaciones / %**")
+    st.write(f'{kpis["registros_con_observaciones"]} registros ({kpis["porc_registros_con_observaciones"]}%)')
+
+# ---------------------------
+# Página: Configuración
+# ---------------------------
+elif menu == "Configuración":
+    st.markdown("### ⚙️ Configuración")
+    st.markdown("Asegúrate de agregar los siguientes `secrets` en Streamlit Cloud (ejemplo):")
+    st.code(
+        """
+# En Settings / Secrets (TOML)
+OPENAI_API_KEY = "tu_api_key_openai"
+
+[gcp_service_account]
+type = "service_account"
+project_id = "registro-horas-maquinaria"
+private_key_id = "..."
+private_key = "-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----"
+client_email = "acceso-sheets@registro-horas-maquinaria.iam.gserviceaccount.com"
+client_id = "..."
+token_uri = "https://oauth2.googleapis.com/token"
+        """
+    )
+    st.markdown("Si lo deseas, puedo añadir validaciones, intervalos de mantenimiento (250h/500h) y alertas (Telegram/Correo).")
+
+# ---------------------------
+# Footer / Créditos
+# ---------------------------
+st.markdown("---")
+st.markdown('<div style="font-size:12px; color:#9aa0a6">Desarrollado para uso interno • Jhan C. Herrera Orbezo</div>', unsafe_allow_html=True)
