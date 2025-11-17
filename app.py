@@ -338,7 +338,7 @@ OPENAI_API_KEY = "tu_api_key_openai"
 CREDENCIALES_GOOGLE = '{ ... JSON completo de la cuenta de servicio ... }'
         """
     )
-    st.markdown("Si quieres, puedo añadir autenticación (login) y roles (admin / operador) en la próxima versión.")
+    st.markdown("En crecimiento.")
 
 # ---------------------------
 # Mensajes de errores de conexión (si los hay)
